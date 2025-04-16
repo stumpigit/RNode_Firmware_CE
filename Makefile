@@ -46,7 +46,8 @@ prep-esp32:
 	arduino-cli lib install "Crypto"
 	arduino-cli lib install "Adafruit NeoPixel"
 	arduino-cli lib install "ArduinoJson"
-	arduino-cli lib install --git-url https://github.com/smurfy/microReticulum
+	arduino-cli config set library.enable_unsafe_install true
+	arduino-cli lib install --git-url https://github.com/stumpigit/microReticulum
 	pip install pyserial rns --upgrade --user --break-system-packages # This looks scary, but it's actually just telling pip to install packages as a user instead of trying to install them systemwide, which bypasses the "externally managed environment" error.
 
 prep-nrf:

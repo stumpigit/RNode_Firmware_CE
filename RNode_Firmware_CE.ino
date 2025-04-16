@@ -27,6 +27,9 @@
 #include <queue>
 #ifdef RNS_USE_FS
 #include "FileSystem.h"
+#include "UDPInterface.h"
+#define MSGPACK_DEBUGLOG_ENABLE
+#include <MsgPack.h>
 #else
 #include "NoopFileSystem.h"
 #endif
@@ -178,23 +181,23 @@ protected:
 };
 
 // AnnounceHandler
-//class RNSAnnounceHandler : public RNS::AnnounceHandler {
-//public:
-//  RNSAnnounceHandler(const char* aspect_filter = nullptr) : AnnounceHandler(aspect_filter) {}
-//  virtual ~RNSAnnounceHandler() {}
-//  virtual void received_announce(const RNS::Bytes& destination_hash, const RNS::Identity& announced_identity, const RNS::Bytes& app_data) {
-//    INFO("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-//    INFO("RNSAnnounceHandler: destination hash: " + destination_hash.toHex());
-//    if (announced_identity) {
-//      INFO("RNSAnnounceHandler: announced identity hash: " + announced_identity.hash().toHex());
-//      INFO("RNSAnnounceHandler: announced identity app data: " + announced_identity.app_data().toHex());
-//    }
-//    if (app_data) {
-//      INFO("RNSAnnounceHandler: app data text: \"" + app_data.toString() + "\"");
-//    }
-//    INFO("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-//  }
-//};
+class RNSAnnounceHandler : public RNS::AnnounceHandler {
+public:
+  RNSAnnounceHandler(const char* aspect_filter = nullptr) : AnnounceHandler(aspect_filter) {}
+  virtual ~RNSAnnounceHandler() {}
+  virtual void received_announce(const RNS::Bytes& destination_hash, const RNS::Identity& announced_identity, const RNS::Bytes& app_data) {
+    INFO("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+    INFO("RNSAnnounceHandler: destination hash: " + destination_hash.toHex());
+    if (announced_identity) {
+      INFO("RNSAnnounceHandler: announced identity hash: " + announced_identity.hash().toHex());
+      INFO("RNSAnnounceHandler: announced identity app data: " + announced_identity.app_data().toHex());
+    }
+    if (app_data) {
+      INFO("RNSAnnounceHandler: app data text: \"" + app_data.toString() + "\"");
+    }
+    INFO("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+  }
+};
 
 void onRNSPacket(const RNS::Bytes& data, const RNS::Packet& packet) {
   INFO("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
@@ -222,8 +225,49 @@ void onRNSTransmitPacket(const RNS::Bytes& raw, const RNS::Interface& interface)
   INFO("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
 }
 
+struct LXMFMsgPack {
+  float  timestamp;
+  MsgPack::bin_t<uint8_t> title;
+  MsgPack::bin_t<uint8_t> content;
+
+  MSGPACK_DEFINE(timestamp, title, content);
+};
+
+void onLinkPacket(const RNS::Bytes& plaintext, const RNS::Packet& packet) {
+	INFO("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+	INFO("Packet received: " + plaintext.toHex());
+	INFO("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");	
+
+	// LXMF tests
+	RNS::Bytes destination = plaintext.left(16);
+	RNS::Bytes source = plaintext.mid(16,16);
+	RNS::Bytes ed25519Signature = plaintext.mid(32,64);
+	RNS::Bytes msgPack = plaintext.mid(96);
+
+	LXMFMsgPack message;
+    MsgPack::Unpacker unpacker;
+    unpacker.feed(msgPack.data(), msgPack.size());
+    unpacker.deserialize(message);
+	INFO("Destination: " + destination.toHex());
+	INFO("Source: " + source.toHex());
+	INFO("MsgPack: " + msgPack.toHex());
+
+	char buffer[80];	
+	RNS::Bytes content = RNS::Bytes(message.content.data(),message.content.size());
+	INFO("Content: " + content.toString());
+	INFO("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");	
+}
+
+void onLinkEstablished(RNS::Link& link) {
+	INFO("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+	INFO("Link established: " + link.link_id());
+	INFO("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$");
+	link.set_link_packet_callback(onLinkPacket);
+}
+
 RNS::Reticulum reticulum(RNS::Type::NONE);
 RNS::Interface lora_interface(RNS::Type::NONE);
+RNS::Interface udp_interface(new RNS::Interfaces::UDPInterface("udp"));
 RNS::FileSystem filesystem(RNS::Type::NONE);
 RNS::Identity identity({RNS::Type::NONE});
 RNS::Destination destination({RNS::Type::NONE});
@@ -609,38 +653,47 @@ void setup() {
   RNS::Utilities::OS::register_filesystem(filesystem);
 
 //  // Setting test identity, to have repeatable destination address for testing
-//  RNS::Bytes transport_prv_bytes;
-//  transport_prv_bytes.assignHex("CAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFE");
-//  RNS::Identity transport_identity(false);
-//  transport_identity.load_private_key(transport_prv_bytes);
-//  RNS::Transport::identity(transport_identity);
-//  // End Setting test identity
+  RNS::Bytes transport_prv_bytes;
+  transport_prv_bytes.assignHex("CAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFECAFE");
+  RNS::Identity transport_identity(false);
+  transport_identity.load_private_key(transport_prv_bytes);
+  RNS::Transport::identity(transport_identity);
+  // End Setting test identity
 
   // Debug stuff
   RNS::setLogCallback(&onRNSLog);
-  RNS::Transport::set_receive_packet_callback(onRNSRecievePacket);
-  RNS::Transport::set_transmit_packet_callback(onRNSTransmitPacket);
+  //RNS::Transport::set_receive_packet_callback(onRNSRecievePacket);
+  //RNS::Transport::set_transmit_packet_callback(onRNSTransmitPacket);
   RNS::loglevel(RNS::LOG_TRACE);
 
   // Starting Lora interface used to bridge rns and reticulum
-  lora_interface = new LoRaInterface();
-  lora_interface.mode(RNS::Type::Interface::MODE_GATEWAY);
-  RNS::Transport::register_interface(lora_interface);
+  //lora_interface = new LoRaInterface();
+  //lora_interface.mode(RNS::Type::Interface::MODE_GATEWAY);
+  //RNS::Transport::register_interface(lora_interface);
+
+  // Starting udp interface to bridge rns and reticulumx§
+  udp_interface.mode(RNS::Type::Interface::MODE_GATEWAY);
+	RNS::Transport::register_interface(udp_interface);
+  RNS::Interfaces::UDPInterface* const udp_interfaceimpl = static_cast<RNS::Interfaces::UDPInterface*>( udp_interface.get() );
+	udp_interfaceimpl->start(nullptr, nullptr, 4242);
+
 
   // Initialize and start reticulum itself
   reticulum = RNS::Reticulum();
-  reticulum.transport_enabled(op_mode == MODE_TNC);
-  reticulum.probe_destination_enabled(true);
+  reticulum.transport_enabled(true);
+  //reticulum.probe_destination_enabled(true);
   reticulum.start();
 
   // We are using lxmf.delivery so our announced name will show up in clients and pinging us will work
-  destination = RNS::Destination(RNS::Transport::identity(), RNS::Type::Destination::IN, RNS::Type::Destination::SINGLE, "lxmf", "delivery");
+  destination = RNS::Destination(transport_identity, RNS::Type::Destination::IN, RNS::Type::Destination::SINGLE, "lxmf", "delivery");
   destination.set_packet_callback(onRNSPacket);
+  //destination.enable_ratchets("/tmp");
+  destination.set_link_established_callback(onLinkEstablished);
   destination.set_proof_strategy(RNS::Type::Destination::PROVE_ALL);
 
   // If we want to handle announcements in the future
-//  RNS::HAnnounceHandler announce_handler(new RNSAnnounceHandler());
-//  RNS::Transport::register_announce_handler(announce_handler);
+  RNS::HAnnounceHandler announce_handler(new RNSAnnounceHandler());
+  RNS::Transport::register_announce_handler(announce_handler);
 
   HEAD("RNS is READY!", RNS::LOG_TRACE);
   if (op_mode == MODE_TNC) {
@@ -650,13 +703,12 @@ void setup() {
     TRACE(std::string("TX Power: " + std::to_string(selected_radio->getTxPower())) + " dBm");
     TRACE(std::string("Spreading Factor: " + std::to_string(selected_radio->getSpreadingFactor())));
     TRACE(std::string("Coding Rate: " + std::to_string(selected_radio->getCodingRate4())));
-
-    rnsAnnounce();
   }
   else {
     HEAD("RNS transport mode is DISABLED", RNS::LOG_INFO);
     HEAD("Configure TNC mode with radio configuration to enable RNS transport", RNS::LOG_INFO);
   }
+  rnsAnnounce();
 #endif
 }
 
@@ -1740,8 +1792,9 @@ void work_while_waiting() { loop(); }
 void loop() {
 
 #ifdef HAS_RNS
-  if (reticulum && op_mode == MODE_TNC) {
+  if (reticulum) {
     reticulum.loop();
+    ((RNS::Interfaces::UDPInterface*)udp_interface.get())->loop(udp_interface);
 
     // We announce ourselfs, every 15 minutes
     if ((RNS::Utilities::OS::time() - last_rns_announce) > 900) {
